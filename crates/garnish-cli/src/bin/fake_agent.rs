@@ -30,7 +30,10 @@ fn main() {
             emit(serde_json::json!({ "type": "result", "status": "success", "note": "(lying)" }));
         }
         _ => {
-            if let Some(rest) = goal.strip_prefix("write-file:") {
+            // The directive may sit anywhere in the goal (the runner prefixes
+            // a context preamble); take everything after the marker.
+            if let Some(idx) = goal.find("write-file:") {
+                let rest = &goal[idx + "write-file:".len()..];
                 if let Some((name, content)) = rest.split_once(':') {
                     // Refuse path traversal exactly like a real tool boundary should.
                     if name.contains("..") || name.starts_with('/') {

@@ -46,9 +46,23 @@ Expected: `.harness-garnish/` appears (and never shows in `git status`);
 `PROJECT.md`/`TASKS.md` are readable; `config explain` shows your overrides
 as `PROJECT`, rest `default`.
 
+Also seed project memory and confirm it reaches agents:
+
+```bash
+garnish memory add --project myproj "Tests run with make check, not cargo test"
+garnish memory list --project myproj
+```
+
+Expected: `.harness-garnish/MEMORY.md` regenerates with dated provenance; on
+the next task run the agent's worktree contains `.harness-garnish/MEMORY.md`
+and the prompt preamble points at it; agent-proposed facts appear only in
+run evidence (`memory-proposals.md`) until you promote them.
+
 Evaluate: Is per-project policy expressive enough for how you actually work?
 Is anything you wanted to configure missing (budgets, verifier choice,
 network allowlists — see Appendix)? Do the projections earn their place?
+During area 3, does the agent actually *follow* the memory (e.g. runs
+`make check` instead of `cargo test`)?
 
 ## 3. Real tasks through each subscription agent **[quota]**
 

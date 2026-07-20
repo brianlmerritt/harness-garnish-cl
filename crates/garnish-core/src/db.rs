@@ -6,6 +6,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_daemon", include_str!("../migrations/0002_daemon.sql")),
     ("0003_runs_adapter", include_str!("../migrations/0003_runs_adapter.sql")),
+    ("0004_memories", include_str!("../migrations/0004_memories.sql")),
 ];
 
 /// Open (creating if needed) the canonical database, applying pending
@@ -70,13 +71,13 @@ mod tests {
             let v: i64 = conn
                 .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(v, 3);
+            assert_eq!(v, 4);
         }
         // Reopen: idempotent, no re-apply.
         let conn = super::open(&path).unwrap();
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 3);
+        assert_eq!(n, 4);
     }
 }

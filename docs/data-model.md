@@ -112,6 +112,14 @@ CREATE TABLE costs (                     -- simple API cost ledger (ADR-0007)
   usd        REAL                        -- priced from bundled editable price table; NULL if unknown
 );
 
+CREATE TABLE memories (                  -- curated durable project facts (v4)
+  id         TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  content    TEXT NOT NULL,              -- <= 1000 chars; soft cap 100 rows/project
+  source     TEXT NOT NULL,              -- user | agent-proposal-accepted
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE artifacts (
   id      TEXT PRIMARY KEY,
   run_id  TEXT NOT NULL REFERENCES runs(id),
@@ -158,8 +166,8 @@ in the run evidence directory so any compatible agent can resume.
 Generated from these tables into `<project>/.harness-garnish/` (ADR-0006):
 `PROJECT.md` (from `projects.manifest_json`), `TASKS.md` (tasks by status),
 `HANDOFF.md` (latest handoff packet of the active/paused task),
-`DECISIONS.md`, `MEMORY.md` (curated facts table, size-limited, dated
-provenance — the one projection with a human-edit → `garnish sync` path),
+`DECISIONS.md`, `MEMORY.md` (generated from the `memories` table — curated
+via `garnish memory add/list/remove`, dated provenance, size-capped), plus
 `agents/` vendor stubs (AGENTS.md, CLAUDE.md pointing at PROJECT.md), and
 `runs/<run-id>/` evidence (manifest.json, events.jsonl, stdout/stderr logs,
 verification.json, summary.md, patch refs).

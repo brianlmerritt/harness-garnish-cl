@@ -319,7 +319,8 @@ impl ModelProvider for FakeModelProvider {
             })
             .unwrap_or_default();
         let (name, content) = goal
-            .strip_prefix("write-file:")
+            .find("write-file:")
+            .map(|i| &goal[i + "write-file:".len()..])
             .and_then(|r| r.split_once(':'))
             .unwrap_or(("GARNISH_API_FAKE.txt", "fake"));
         Ok(ChatResponse {

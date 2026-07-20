@@ -50,6 +50,23 @@ enum Cmd {
     },
     #[command(subcommand)]
     Config(ConfigCmd),
+    #[command(subcommand)]
+    Memory(MemoryCmd),
+}
+
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Add a durable fact to a project's memory (max 1000 chars).
+    Add {
+        #[arg(long)]
+        project: String,
+        content: String,
+    },
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    Remove { id: String },
 }
 
 #[derive(Subcommand)]
@@ -331,6 +348,32 @@ async fn main() -> Result<()> {
                 println!("precedence: built-in defaults -> project policy (task overrides not yet implemented)");
             }
         }
+        Cmd::Memory(c) => match c {
+            MemoryCmd::Add { project, content } => {
+                let p = store::project_get(&conn, &project)?;
+                let id = store::memory_add(&conn, &p.id, &content, "user")?;
+                projections::write_all(&conn, &p)?;
+                println!("memory {id} added to {}; MEMORY.md regenerated", p.name);
+            }
+            MemoryCmd::List { project } => {
+                let p = store::project_get(&conn, &project)?;
+                let memories = store::memories_for(&conn, &p.id)?;
+                if memories.is_empty() {
+                    println!("no memories for {}", p.name);
+                }
+                for (id, content, source, created_at) in memories {
+                    println!("{id}  [{source} {date}]  {content}", date = &created_at[..10]);
+                }
+            }
+            MemoryCmd::Remove { id } => {
+                store::memory_remove(&conn, &id)?;
+                // Regenerate all projections; cheap and keeps every MEMORY.md honest.
+                for p in store::project_list(&conn)? {
+                    let _ = projections::write_all(&conn, &p);
+                }
+                println!("memory {id} removed");
+            }
+        },
     }
     Ok(())
 }

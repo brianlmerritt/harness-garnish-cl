@@ -137,6 +137,18 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     };
     let wt_path = PathBuf::from(&git.worktree_path);
 
+    // Materialise project context (PROJECT.md, MEMORY.md, latest handoff)
+    // into the worktree — agents otherwise see none of it, since worktrees
+    // come from committed HEAD and .harness-garnish/ is git-excluded.
+    let handoff_packet = store::run_list(conn, task_id)?
+        .last()
+        .map(|r| PathBuf::from(&r.evidence_dir).join("handoff.json"))
+        .filter(|p| p.exists())
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    projections::materialize_worktree_context(conn, &project, &wt_path, handoff_packet.as_ref())?;
+    let prompt = build_prompt(&task.spec.goal, handoff_packet.is_some());
+
     let from = if resuming { TaskStatus::AwaitingApproval } else { TaskStatus::Planning };
     state::transition(conn, task_id, from, TaskStatus::Running, "agent starting")?;
 
@@ -187,7 +199,7 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
         }
     });
 
-    let inv = adapter.build_invocation(&task.spec.goal)?;
+    let inv = adapter.build_invocation(&prompt)?;
     garnish_core::events::append(
         conn, Some(task_id), Some(&run_id), "process",
         &serde_json::json!({ "argv": inv.argv, "cwd": wt_path, "phase": "agent" }),
@@ -219,6 +231,21 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
         jsonl.push('\n');
     }
     std::fs::write(evidence.join("events.jsonl"), jsonl)?;
+
+    // Agent-proposed memory: surfaced as evidence, never auto-promoted.
+    let proposals = wt_path.join(".harness-garnish/memory-proposals.md");
+    if proposals.exists() {
+        std::fs::copy(&proposals, evidence.join("memory-proposals.md"))?;
+        garnish_core::events::append(
+            conn, Some(task_id), Some(&run_id), "memory_proposed",
+            &serde_json::json!({ "evidence": evidence.join("memory-proposals.md") }),
+        )?;
+        println!(
+            "task {task_id}: agent proposed memory — review {} and promote with `garnish memory add --project {}`",
+            evidence.join("memory-proposals.md").display(),
+            project.name
+        );
+    }
 
     match outcome.status {
         "ok" => {}
@@ -534,6 +561,28 @@ async fn verify(
     )?;
     let _ = gitx::git(repo, &["worktree", "remove", "--force", verify_path.to_str().unwrap()]);
     Ok(all_ok)
+}
+
+/// The prompt handed to every adapter: a short context preamble pointing at
+/// the materialised worktree files, then the task goal verbatim.
+fn build_prompt(goal: &str, has_handoff: bool) -> String {
+    let mut p = String::from(
+        "Read .harness-garnish/PROJECT.md and .harness-garnish/MEMORY.md in the \
+         working directory first: they hold project context and durable memory. ",
+    );
+    if has_handoff {
+        p.push_str(
+            "A previous agent worked on this task; its state is in \
+             .harness-garnish/HANDOFF.md — resume from it, do not redo completed work. ",
+        );
+    }
+    p.push_str(
+        "If you discover a durable fact future agents should know, append it as a \
+         single line to .harness-garnish/memory-proposals.md. Never commit the \
+         .harness-garnish directory.\n\nTask: ",
+    );
+    p.push_str(goal);
+    p
 }
 
 /// Record API/agent-reported usage in the cost ledger. Tokens are stored as

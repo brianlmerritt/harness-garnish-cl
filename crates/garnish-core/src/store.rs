@@ -460,6 +460,48 @@ pub fn quota_snapshot_insert(
     Ok(id)
 }
 
+// ---------- memories ----------
+
+pub const MEMORY_MAX_CHARS: usize = 1000;
+pub const MEMORY_SOFT_CAP: usize = 100;
+
+pub fn memory_add(conn: &Connection, project_id: &str, content: &str, source: &str) -> Result<String> {
+    let content = content.trim();
+    anyhow::ensure!(!content.is_empty(), "memory content is empty");
+    anyhow::ensure!(
+        content.len() <= MEMORY_MAX_CHARS,
+        "memory too long ({} chars, max {MEMORY_MAX_CHARS}) — keep facts short and durable",
+        content.len()
+    );
+    let id = crate::ids::new_id();
+    conn.execute(
+        "INSERT INTO memories (id, project_id, content, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, project_id, content, source, crate::ids::now()],
+    )?;
+    crate::events::append(
+        conn, None, None, "memory_added",
+        &serde_json::json!({ "project_id": project_id, "memory_id": id, "source": source }),
+    )?;
+    Ok(id)
+}
+
+/// (id, content, source, created_at), oldest first.
+pub fn memories_for(conn: &Connection, project_id: &str) -> Result<Vec<(String, String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, content, source, created_at FROM memories WHERE project_id = ?1 ORDER BY rowid",
+    )?;
+    let rows = stmt
+        .query_map([project_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn memory_remove(conn: &Connection, id: &str) -> Result<()> {
+    let n = conn.execute("DELETE FROM memories WHERE id = ?1", [id])?;
+    anyhow::ensure!(n > 0, "memory not found: {id}");
+    Ok(())
+}
+
 /// Most recent events for a task (newest last), bounded.
 pub fn events_for_task(conn: &Connection, task_id: &str, limit: usize) -> Result<Vec<serde_json::Value>> {
     let mut stmt = conn.prepare(
