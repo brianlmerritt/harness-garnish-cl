@@ -79,6 +79,10 @@ and migrated with the database.
 
 ## Quota gating
 
+See [quota-reserves-and-forecasting.md](quota-reserves-and-forecasting.md)
+for the full reserve semantics, a worked example, what is recorded where,
+and the planned estimate-aware forecasting.
+
 Before leasing: `guard(provider, profile, reserve_pct, window)` for both
 session and weekly windows. `Below` → reschedule for after `resets_at`.
 `Unknown` → per-project `unknown_quota` policy (default fail-closed when the

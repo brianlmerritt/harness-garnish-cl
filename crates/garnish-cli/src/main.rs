@@ -48,6 +48,18 @@ enum Cmd {
         #[arg(long, default_value_t = 4180)]
         port: u16,
     },
+    #[command(subcommand)]
+    Config(ConfigCmd),
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Show a project's effective policy field by field, with provenance
+    /// (built-in default vs project override).
+    Explain {
+        #[arg(long)]
+        project: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -295,8 +307,52 @@ async fn main() -> Result<()> {
             }
         }
         Cmd::Web { port } => web::serve(port).await?,
+        Cmd::Config(ConfigCmd::Explain { project }) => {
+            let p = store::project_get(&conn, &project)?;
+            let defaults = flatten(&serde_json::to_value(ProjectPolicy::default())?);
+            let effective = flatten(&serde_json::to_value(&p.policy)?);
+            if cli.json {
+                let rows: Vec<serde_json::Value> = effective
+                    .iter()
+                    .map(|(k, v)| {
+                        serde_json::json!({
+                            "field": k, "value": v,
+                            "source": if defaults.get(k) == Some(v) { "default" } else { "project" },
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                println!("effective policy for project {} ({}):", p.name, p.id);
+                for (k, v) in &effective {
+                    let source = if defaults.get(k) == Some(v) { "default" } else { "PROJECT " };
+                    println!("  {source:8} {k} = {v}");
+                }
+                println!("precedence: built-in defaults -> project policy (task overrides not yet implemented)");
+            }
+        }
     }
     Ok(())
+}
+
+/// Flatten a policy document to sorted dot-path -> value pairs.
+fn flatten(v: &serde_json::Value) -> std::collections::BTreeMap<String, serde_json::Value> {
+    fn walk(prefix: &str, v: &serde_json::Value, out: &mut std::collections::BTreeMap<String, serde_json::Value>) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, child) in map {
+                    let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    walk(&path, child, out);
+                }
+            }
+            other => {
+                out.insert(prefix.to_string(), other.clone());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk("", v, &mut out);
+    out
 }
 
 fn probe_version(cmd: &str, args: &[&str]) -> Option<String> {

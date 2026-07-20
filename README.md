@@ -44,6 +44,8 @@ target/debug/garnish doctor      # probe engines, agent CLIs, quota tooling
 | [docs/data-model.md](docs/data-model.md) | SQLite schema, task state machine |
 | [docs/contracts.md](docs/contracts.md) | Adapter/backend/provider trait contracts |
 | [docs/policy-model.md](docs/policy-model.md) | Risk classes, per-project policy, W/O/B scheduling |
+| [docs/quota-reserves-and-forecasting.md](docs/quota-reserves-and-forecasting.md) | Reserve semantics, tracked snapshots, forecasting design |
+| [docs/testing.md](docs/testing.md) | Test tiers and per-platform instructions |
 | [docs/threat-model.md](docs/threat-model.md) | Threats and mitigations |
 | [docs/mvp-acceptance.md](docs/mvp-acceptance.md) | Revised MVP scope and demo criteria |
 | [docs/adr/](docs/adr/) | Architecture decision records |

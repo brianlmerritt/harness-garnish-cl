@@ -54,3 +54,26 @@ Out of MVP scope (tracked, not demoed): skills registry, MCP/ACP trust
 controls beyond AoE composition, notifications/remote approvals, Tokscale
 history, credential projection into containers, Apple Container, TUI.
 Real-agent smoke tests exist but are opt-in and labelled quota-consuming.
+
+## Acceptance evidence (recorded 2026-07-20)
+
+| # | Criterion | Evidence |
+|---|---|---|
+| 1 | doctor / honest probes | Manual on macOS (podman honestly `missing`) and user-run on Ubuntu VPS (docker+podman `ok`) |
+| 2 | Projects, backlog, deps, cycle rejection | `store::dependency_cycle_rejected`, e2e `dependent_task_waits_for_dependency`; `--kind overarching` supported |
+| 3 | Per-project policy visible + enforced | e2e `schedule_never_day_refuses_start`, policy unit tests, `garnish config explain` (provenance per field) |
+| 4 | Quota decline/reschedule, unknown policy | tests/quota.rs (5 tests: ok/below/unknown-closed/stale/unknown-open) + live CodexBar run |
+| 5 | Routing with recorded rationale + pinning | `quota_ok_routes_and_records_score` (score/candidates in route_json); pin via task/policy/CLI override |
+| 6 | Isolation without credential/socket mounts | tests/backends.rs on docker (macOS+VPS) and rootless podman (VPS+WSL2, user-run); `docker_args_are_constrained` |
+| 7 | Agents run, stream evidence, cancel cleanly | e2e `cancellation_stops_running_agent`; real Claude smoke (32s, verified) |
+| 8 | Restart survival + cross-adapter handoff | daemon `crash_recovery_lease_expires_and_task_resumes`; tests/handoff.rs (fake adapter -> pause+handoff -> api adapter completes) |
+| 9 | Independent verification in clean sandbox | detached-worktree verifier; `lying_agent_is_caught_by_verifier` |
+| 10/13 | Patch+evidence presented, nothing pushed | e2e `happy_path_to_review_with_patch` (user checkout asserted untouched) |
+| 11 | API models + cost ledger | tests/api_agent.rs; user-run `real_api_anthropic_end_to_end` passed |
+| 12 | Web UX reads + approvals/pause/cancel | tests/web.rs; live browser session (deny path exercised through the real UI) |
+
+Known partials (accepted, tracked): profile-specific CodexBar `--account`
+pass-through not yet wired (profiles are recorded in routes); the daemon
+polls rather than computing exact schedule-window wake times; estimate-aware
+quota forecasting is design-only — see
+[quota-reserves-and-forecasting.md](quota-reserves-and-forecasting.md).
