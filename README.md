@@ -6,7 +6,11 @@ agents, selects work that can safely finish within available quota and time,
 runs it in isolated git worktrees and containers, verifies results
 independently, and leaves a transparent audit trail.
 
-Status: **MVP slice — API model providers + cost ledger** (on top of Phase 3).
+Status: **MVP feature-complete** (pending Phase 5 hardening/packaging).
+`garnish web` serves the first web UX on loopback with bearer-token auth:
+live view of tasks, pending approvals (approve/deny), quota snapshots, and
+the cost ledger, with pause/resume/cancel/retry — all through the same
+policy path as the CLI. Also included:
 `garnish` can now route tasks to API/local models via the built-in
 `garnish-api-agent` tool loop (`--adapter api`; Anthropic, OpenAI, or any
 OpenAI-compatible endpoint such as Ollama/llama.cpp/OpenRouter via

@@ -1,5 +1,6 @@
 mod daemon;
 mod runner;
+mod web;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -41,6 +42,11 @@ enum Cmd {
     Cost {
         #[arg(long)]
         project: Option<String>,
+    },
+    /// Serve the web UX on loopback (bearer-token auth; port 0 = random).
+    Web {
+        #[arg(long, default_value_t = 4180)]
+        port: u16,
     },
 }
 
@@ -288,6 +294,7 @@ async fn main() -> Result<()> {
                 println!("total priced: ${total:.4}");
             }
         }
+        Cmd::Web { port } => web::serve(port).await?,
     }
     Ok(())
 }

@@ -91,8 +91,8 @@ crates/
   garnish-exec/      worktrees, container backends, headless spawner, AoE adapter
   garnish-agents/    agent adapters + fake agent
   garnish-providers/ model providers, quota providers, cost tracking
-  garnish-cli/       clap CLI (binary: garnish)
-  garnish-web/       axum web UX (feature-gated into the same binary)
+  garnish-cli/       clap CLI (binary: garnish; src/web.rs = axum web UX,
+                     src/bin/ = fake-agent + garnish-api-agent)
 docs/                this documentation and ADRs
 fixtures/            recorded CLI outputs for drift tests, fake-agent scripts
 ```

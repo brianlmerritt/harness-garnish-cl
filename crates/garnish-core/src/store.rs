@@ -460,6 +460,49 @@ pub fn quota_snapshot_insert(
     Ok(id)
 }
 
+/// Most recent events for a task (newest last), bounded.
+pub fn events_for_task(conn: &Connection, task_id: &str, limit: usize) -> Result<Vec<serde_json::Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT at, kind, data_json FROM events WHERE task_id = ?1
+         ORDER BY rowid DESC LIMIT ?2",
+    )?;
+    let mut rows: Vec<serde_json::Value> = stmt
+        .query_map(params![task_id, limit as i64], |r| {
+            let data: String = r.get(2)?;
+            Ok(serde_json::json!({
+                "at": r.get::<_, String>(0)?,
+                "kind": r.get::<_, String>(1)?,
+                "data": serde_json::from_str::<serde_json::Value>(&data).unwrap_or(serde_json::Value::Null),
+            }))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    rows.reverse();
+    Ok(rows)
+}
+
+/// Recent quota snapshots (newest first), bounded.
+pub fn quota_snapshots_recent(conn: &Connection, limit: usize) -> Result<Vec<serde_json::Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT at, provider, window, remaining_pct, resets_at, source, confidence, unknown_reason
+         FROM quota_snapshots ORDER BY rowid DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map([limit as i64], |r| {
+            Ok(serde_json::json!({
+                "at": r.get::<_, String>(0)?,
+                "provider": r.get::<_, String>(1)?,
+                "window": r.get::<_, String>(2)?,
+                "remaining_pct": r.get::<_, Option<f64>>(3)?,
+                "resets_at": r.get::<_, Option<String>>(4)?,
+                "source": r.get::<_, String>(5)?,
+                "confidence": r.get::<_, String>(6)?,
+                "unknown_reason": r.get::<_, Option<String>>(7)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 // ---------- cost ledger ----------
 
 #[allow(clippy::too_many_arguments)]

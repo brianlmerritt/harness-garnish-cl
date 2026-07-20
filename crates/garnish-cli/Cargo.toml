@@ -21,6 +21,7 @@ path = "src/bin/api_agent.rs"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 garnish-agents = { path = "../garnish-agents" }
@@ -34,3 +35,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+ureq.workspace = true

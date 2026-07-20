@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Garnish</title>
+<style>
+  :root { color-scheme: light dark; --line:#8884; --accent:#2a7ae2; --bad:#c0392b; --ok:#27ae60; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1100px; padding: 1rem; }
+  h1 { font-size: 1.2rem; } h2 { font-size: 1rem; margin: 1.2rem 0 .4rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; opacity: .7; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 0 .5rem; font-size: .8rem; white-space: nowrap; }
+  .pill.running, .pill.verifying { border-color: var(--accent); color: var(--accent); }
+  .pill.review { border-color: var(--ok); color: var(--ok); }
+  .pill.failed, .pill.blocked, .pill.cancelled { border-color: var(--bad); color: var(--bad); }
+  button { border: 1px solid var(--line); background: none; border-radius: 4px; padding: .1rem .5rem; cursor: pointer; font-size: .8rem; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  #status { float: right; opacity: .6; font-size: .8rem; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: .78rem; background: #8881; padding: .5rem; border-radius: 4px; max-height: 20rem; overflow: auto; }
+  .muted { opacity: .6; }
+  #detail { border: 1px solid var(--line); border-radius: 6px; padding: .6rem 1rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<h1>Harness Garnish <span id="status">connecting…</span></h1>
+
+<h2>Pending approvals</h2>
+<div id="approvals" class="muted">none</div>
+
+<h2>Tasks</h2>
+<table><thead><tr><th>task</th><th>project</th><th>status</th><th>title</th><th>actions</th></tr></thead>
+<tbody id="tasks"></tbody></table>
+
+<h2>Quota (latest snapshots)</h2>
+<table><thead><tr><th>at</th><th>provider</th><th>window</th><th>remaining</th><th>resets</th></tr></thead>
+<tbody id="quota"></tbody></table>
+
+<h2>API cost</h2>
+<table><thead><tr><th>date</th><th>project</th><th>provider</th><th>model</th><th>in</th><th>out</th><th>cache</th><th>usd</th></tr></thead>
+<tbody id="costs"></tbody></table>
+
+<div id="detail" hidden>
+  <h2 id="detail-title"></h2>
+  <pre id="detail-body"></pre>
+</div>
+
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+if (params.get("token")) {
+  localStorage.setItem("garnish_token", params.get("token"));
+  history.replaceState(null, "", location.pathname); // keep the token out of the address bar
+}
+const token = localStorage.getItem("garnish_token") || "";
+const H = { "Authorization": "Bearer " + token };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let projects = {};
+
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers: H }, opts));
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function act(kind, id, action) {
+  try {
+    await api(`/api/${kind}/${id}/${action}`, { method: "POST" });
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+
+async function showDetail(id) {
+  try {
+    const d = await api(`/api/task/${id}`);
+    document.getElementById("detail").hidden = false;
+    document.getElementById("detail-title").textContent = `${d.task.title} (${d.task.status})`;
+    document.getElementById("detail-body").textContent = JSON.stringify(d, null, 2);
+  } catch (e) { alert(e.message); }
+}
+
+function taskButtons(t) {
+  const b = [];
+  const mk = (label, action) => `<button onclick="act('task','${t.id}','${action}')">${label}</button>`;
+  if (["ready","running"].includes(t.status)) b.push(mk("pause", "pause"));
+  if (t.status === "paused") b.push(mk("resume", "resume"));
+  if (t.status === "failed") b.push(mk("retry", "retry"));
+  if (!["completed","cancelled","superseded","failed"].includes(t.status)) b.push(mk("cancel", "cancel"));
+  b.push(`<button onclick="showDetail('${t.id}')">detail</button>`);
+  return b.join(" ");
+}
+
+async function refresh() {
+  try {
+    const o = await api("/api/overview");
+    document.getElementById("status").textContent = "live · " + new Date().toLocaleTimeString();
+    projects = Object.fromEntries(o.projects.map(p => [p.id, p.name]));
+
+    const ap = document.getElementById("approvals");
+    if (o.approvals.length === 0) { ap.textContent = "none"; ap.className = "muted"; }
+    else {
+      ap.className = "";
+      ap.innerHTML = o.approvals.map(a => `
+        <p><b>${esc(a.action.action)}</b> — ${esc(a.action.title ?? "")}
+        <span class="muted">(risk ${esc(a.action.risk_tier)}, expires ${esc(a.expires_at)})</span><br>
+        ${esc(a.action.effect ?? "")}<br>
+        <button onclick="act('approval','${a.id}','approve')">approve</button>
+        <button onclick="act('approval','${a.id}','deny')">deny</button></p>`).join("");
+    }
+
+    document.getElementById("tasks").innerHTML = o.tasks.map(t => `
+      <tr><td class="muted">${t.id.slice(-8)}</td>
+      <td>${esc(projects[t.project_id] ?? t.project_id.slice(-8))}</td>
+      <td><span class="pill ${t.status}">${t.status}</span></td>
+      <td>${esc(t.title)}</td><td>${taskButtons(t)}</td></tr>`).join("");
+
+    document.getElementById("quota").innerHTML = o.quota.map(q => `
+      <tr><td class="muted">${q.at.slice(11,19)}</td><td>${esc(q.provider)}</td><td>${q.window}</td>
+      <td>${q.remaining_pct == null ? `<span class="pill failed">unknown: ${esc(q.unknown_reason ?? "")}</span>` : q.remaining_pct.toFixed(0) + "%"}</td>
+      <td class="muted">${esc(q.resets_at ?? "-")}</td></tr>`).join("");
+
+    document.getElementById("costs").innerHTML = o.costs.map(c => `
+      <tr><td>${c.date}</td><td>${esc(c.project)}</td><td>${esc(c.provider)}</td><td>${esc(c.model)}</td>
+      <td>${c.input_tokens}</td><td>${c.output_tokens}</td><td>${c.cache_tokens}</td>
+      <td>${c.usd == null ? "unpriced" : "$" + c.usd.toFixed(4)}</td></tr>`).join("");
+  } catch (e) {
+    document.getElementById("status").textContent = "error: " + e.message;
+  }
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
