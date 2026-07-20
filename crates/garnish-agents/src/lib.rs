@@ -117,7 +117,10 @@ impl AgentAdapter for ClaudeAdapter {
 
     fn extract_usage(&self, events: &[serde_json::Value]) -> Option<serde_json::Value> {
         let result = events.iter().rev().find(|e| e["type"] == "result")?;
+        let model = events.iter().find(|e| e["type"] == "system").map(|e| e["model"].clone());
         Some(serde_json::json!({
+            "provider": "claude",
+            "model": model,
             "usage": result["usage"],
             "total_cost_usd": result["total_cost_usd"],
             "duration_ms": result["duration_ms"],
@@ -226,7 +229,78 @@ impl AgentAdapter for AntigravityAdapter {
     }
 }
 
-pub const ADAPTER_NAMES: &[&str] = &["fake", "claude-code", "codex", "antigravity"];
+// ---------- API/local models (garnish-api-agent) ----------
+
+/// Drives the built-in `garnish-api-agent` tool loop. Which model/provider is
+/// used comes from GARNISH_API_* env (see the binary's docs). Quota-exempt:
+/// API billing is tracked in the cost ledger, not subscription windows.
+pub struct ApiAdapter;
+
+impl ApiAdapter {
+    fn binary() -> Result<PathBuf> {
+        if let Ok(p) = std::env::var("GARNISH_API_AGENT_BIN") {
+            let p = PathBuf::from(p);
+            anyhow::ensure!(p.exists(), "GARNISH_API_AGENT_BIN points at missing file: {}", p.display());
+            return Ok(p);
+        }
+        let exe = std::env::current_exe()?;
+        for ancestor in [exe.parent(), exe.parent().and_then(|p| p.parent())]
+            .into_iter()
+            .flatten()
+        {
+            let candidate = ancestor.join("garnish-api-agent");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+        anyhow::bail!("garnish-api-agent binary not found next to garnish")
+    }
+}
+
+impl AgentAdapter for ApiAdapter {
+    fn name(&self) -> &'static str {
+        "api"
+    }
+
+    fn probe(&self) -> Result<String> {
+        let bin = Self::binary()?;
+        let provider = std::env::var("GARNISH_API_PROVIDER")
+            .map_err(|_| anyhow::anyhow!("GARNISH_API_PROVIDER not set (anthropic|openai|openai-compat|fake)"))?;
+        Ok(format!("garnish-api-agent ({provider}) at {}", bin.display()))
+    }
+
+    fn build_invocation(&self, goal: &str) -> Result<Invocation> {
+        // The spawner strips env; pass the API config through explicitly.
+        let extra_env = ["GARNISH_API_PROVIDER", "GARNISH_API_MODEL", "GARNISH_API_BASE_URL", "GARNISH_API_KEY_ENV"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .chain(
+                // The key variable itself (name taken from GARNISH_API_KEY_ENV,
+                // defaulting per provider) must also cross the env allowlist.
+                std::env::var("GARNISH_API_KEY_ENV")
+                    .ok()
+                    .into_iter()
+                    .chain(["ANTHROPIC_API_KEY".to_string(), "OPENAI_API_KEY".to_string()])
+                    .filter_map(|k| std::env::var(&k).ok().map(|v| (k, v))),
+            )
+            .collect();
+        Ok(Invocation {
+            argv: vec![Self::binary()?.to_string_lossy().into_owned(), goal.to_string()],
+            extra_env,
+        })
+    }
+
+    fn extract_usage(&self, events: &[serde_json::Value]) -> Option<serde_json::Value> {
+        let result = events.iter().rev().find(|e| e["type"] == "result" || e["type"] == "error")?;
+        Some(serde_json::json!({
+            "provider": result["provider"],
+            "model": result["model"],
+            "usage": result["usage"],
+        }))
+    }
+}
+
+pub const ADAPTER_NAMES: &[&str] = &["fake", "claude-code", "codex", "antigravity", "api"];
 
 pub fn adapter_by_name(name: &str) -> Result<Box<dyn AgentAdapter>> {
     match name {
@@ -236,6 +310,7 @@ pub fn adapter_by_name(name: &str) -> Result<Box<dyn AgentAdapter>> {
         "claude-code" => Ok(Box::new(ClaudeAdapter)),
         "codex" => Ok(Box::new(CodexAdapter)),
         "antigravity" => Ok(Box::new(AntigravityAdapter)),
+        "api" => Ok(Box::new(ApiAdapter)),
         other => anyhow::bail!("unknown adapter: {other} ({})", ADAPTER_NAMES.join("|")),
     }
 }

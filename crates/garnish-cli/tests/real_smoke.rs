@@ -67,3 +67,15 @@ fn real_codex_end_to_end() {
 fn real_antigravity_end_to_end() {
     run_real("antigravity");
 }
+
+/// Real Anthropic API through the garnish-api-agent tool loop.
+/// Needs ANTHROPIC_API_KEY; bills API credits (cents), not subscription.
+#[test]
+#[ignore = "consumes Anthropic API credits"]
+fn real_api_anthropic_end_to_end() {
+    std::env::var("ANTHROPIC_API_KEY").expect("set ANTHROPIC_API_KEY to run this");
+    // The adapter forwards GARNISH_API_* + the key through the env allowlist.
+    std::env::set_var("GARNISH_API_PROVIDER", "anthropic");
+    std::env::set_var("GARNISH_API_MODEL", "claude-haiku-4-5-20251001");
+    run_real("api");
+}

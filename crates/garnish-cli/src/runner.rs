@@ -263,6 +263,7 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     store::task_set_git(conn, task_id, &git)?;
     let usage = adapter.extract_usage(&events);
     store::run_finish(conn, &run_id, "ok", usage.as_ref())?;
+    record_cost(conn, &run_id, &project.id, &adapter_name, usage.as_ref());
 
     // Independent verification in a clean checkout of the produced commit.
     state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Verifying, "agent claims done")?;
@@ -533,6 +534,45 @@ async fn verify(
     )?;
     let _ = gitx::git(repo, &["worktree", "remove", "--force", verify_path.to_str().unwrap()]);
     Ok(all_ok)
+}
+
+/// Record API/agent-reported usage in the cost ledger. Tokens are stored as
+/// reported; USD is filled from the price table (or the provider's own
+/// figure, e.g. Claude Code's total_cost_usd) and left NULL when unknown.
+fn record_cost(
+    conn: &Connection,
+    run_id: &str,
+    project_id: &str,
+    adapter_name: &str,
+    usage: Option<&serde_json::Value>,
+) {
+    let Some(u) = usage else { return };
+    let tokens = &u["usage"];
+    let input = tokens["input_tokens"].as_i64().unwrap_or(0);
+    let output = tokens["output_tokens"].as_i64().unwrap_or(0);
+    let cache = tokens["cache_read_tokens"]
+        .as_i64()
+        .or(tokens["cache_read_input_tokens"].as_i64())
+        .unwrap_or(0);
+    if input == 0 && output == 0 && u["total_cost_usd"].is_null() {
+        return;
+    }
+    let provider = u["provider"].as_str().unwrap_or(adapter_name).to_string();
+    let model = u["model"].as_str().unwrap_or("unknown").to_string();
+    let usd = u["total_cost_usd"].as_f64().or_else(|| {
+        garnish_providers::pricing::cost_usd_at(
+            &model,
+            &garnish_providers::Usage {
+                input_tokens: input.max(0) as u64,
+                output_tokens: output.max(0) as u64,
+                cache_read_tokens: cache.max(0) as u64,
+            },
+            Some(&paths::data_dir().join("prices.json")),
+        )
+    });
+    if let Err(e) = store::cost_insert(conn, run_id, project_id, &provider, &model, input, output, cache, usd) {
+        eprintln!("cost ledger insert failed (non-fatal): {e}");
+    }
 }
 
 fn write_handoff(

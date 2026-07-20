@@ -37,6 +37,11 @@ enum Cmd {
     Quota(QuotaCmd),
     #[command(subcommand)]
     Profile(ProfileCmd),
+    /// API cost ledger, aggregated per project/day/provider/model.
+    Cost {
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -252,6 +257,37 @@ async fn main() -> Result<()> {
                 }
             }
         },
+        Cmd::Cost { project } => {
+            let pid = match project {
+                Some(name) => Some(store::project_get(&conn, &name)?.id),
+                None => None,
+            };
+            let rows = store::cost_summary(&conn, pid.as_deref())?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else if rows.is_empty() {
+                println!("no API costs recorded");
+            } else {
+                let mut total = 0.0;
+                for r in &rows {
+                    let usd = r["usd"].as_f64();
+                    total += usd.unwrap_or(0.0);
+                    println!(
+                        "{}  {:12} {:14} {:28} in {:>9} out {:>8} cache {:>9}  {}",
+                        r["date"].as_str().unwrap_or("-"),
+                        r["project"].as_str().unwrap_or("-"),
+                        r["provider"].as_str().unwrap_or("-"),
+                        r["model"].as_str().unwrap_or("-"),
+                        r["input_tokens"], r["output_tokens"], r["cache_tokens"],
+                        match usd {
+                            Some(v) => format!("${v:.4}"),
+                            None => "unpriced".to_string(),
+                        },
+                    );
+                }
+                println!("total priced: ${total:.4}");
+            }
+        }
     }
     Ok(())
 }

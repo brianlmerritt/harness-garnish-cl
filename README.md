@@ -6,7 +6,12 @@ agents, selects work that can safely finish within available quota and time,
 runs it in isolated git worktrees and containers, verifies results
 independently, and leaves a transparent audit trail.
 
-Status: **Phase 3 — multi-agent and quota routing**. `garnish` runs the full
+Status: **MVP slice — API model providers + cost ledger** (on top of Phase 3).
+`garnish` can now route tasks to API/local models via the built-in
+`garnish-api-agent` tool loop (`--adapter api`; Anthropic, OpenAI, or any
+OpenAI-compatible endpoint such as Ollama/llama.cpp/OpenRouter via
+`GARNISH_API_*` env), with per-call usage priced into a cost ledger
+(`garnish cost`, override prices via `<data_dir>/prices.json`). Earlier: `garnish` runs the full
 task loop (quota-gated route → isolated worktree → agent → independent
 verification in a clean sandbox → patch), a supervision daemon (leases,
 heartbeats, retry with backoff, pause/handoff, crash recovery, GC), adapters

@@ -1,0 +1,10 @@
+{
+  "_comment": "USD per million tokens. Override or extend via <data_dir>/prices.json (same shape). Prices as of 2026-07; verify against provider pricing pages.",
+  "claude-fable-5": { "in": 25.0, "out": 125.0, "cache_read": 2.5 },
+  "claude-opus-4-8": { "in": 15.0, "out": 75.0, "cache_read": 1.5 },
+  "claude-sonnet-5": { "in": 3.0, "out": 15.0, "cache_read": 0.3 },
+  "claude-haiku-4-5-20251001": { "in": 1.0, "out": 5.0, "cache_read": 0.1 },
+  "gpt-5.2": { "in": 1.75, "out": 14.0, "cache_read": 0.175 },
+  "gpt-5.2-mini": { "in": 0.35, "out": 2.8, "cache_read": 0.035 },
+  "fake-model": { "in": 1.0, "out": 2.0 }
+}

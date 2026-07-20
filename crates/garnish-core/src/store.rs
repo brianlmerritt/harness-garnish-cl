@@ -460,6 +460,66 @@ pub fn quota_snapshot_insert(
     Ok(id)
 }
 
+// ---------- cost ledger ----------
+
+#[allow(clippy::too_many_arguments)]
+pub fn cost_insert(
+    conn: &Connection,
+    run_id: &str,
+    project_id: &str,
+    provider: &str,
+    model: &str,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_tokens: i64,
+    usd: Option<f64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO costs (id, at, run_id, project_id, provider, model, input_tokens, output_tokens, cache_tokens, usd)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            crate::ids::new_id(), crate::ids::now(), run_id, project_id,
+            provider, model, input_tokens, output_tokens, cache_tokens, usd
+        ],
+    )?;
+    Ok(())
+}
+
+/// Per project/day/provider/model aggregate for `garnish cost`.
+pub fn cost_summary(conn: &Connection, project_id: Option<&str>) -> Result<Vec<serde_json::Value>> {
+    let (filter, args): (&str, Vec<String>) = match project_id {
+        Some(p) => ("WHERE c.project_id = ?1", vec![p.to_string()]),
+        None => ("", vec![]),
+    };
+    let sql = format!(
+        "SELECT p.name, date(c.at), c.provider, c.model,
+                SUM(c.input_tokens), SUM(c.output_tokens), SUM(c.cache_tokens),
+                SUM(c.usd), COUNT(*), SUM(c.usd IS NULL)
+         FROM costs c JOIN projects p ON p.id = c.project_id
+         {filter}
+         GROUP BY p.name, date(c.at), c.provider, c.model
+         ORDER BY date(c.at) DESC, p.name"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(args), |r| {
+            Ok(serde_json::json!({
+                "project": r.get::<_, String>(0)?,
+                "date": r.get::<_, String>(1)?,
+                "provider": r.get::<_, String>(2)?,
+                "model": r.get::<_, String>(3)?,
+                "input_tokens": r.get::<_, i64>(4)?,
+                "output_tokens": r.get::<_, i64>(5)?,
+                "cache_tokens": r.get::<_, i64>(6)?,
+                "usd": r.get::<_, Option<f64>>(7)?,
+                "calls": r.get::<_, i64>(8)?,
+                "unpriced_calls": r.get::<_, i64>(9)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 // ---------- profiles ----------
 
 pub fn profile_add(conn: &Connection, provider: &str, name: &str, config: &serde_json::Value) -> Result<String> {
