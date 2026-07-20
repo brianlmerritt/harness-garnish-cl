@@ -8,6 +8,12 @@ license.workspace = true
 name = "garnish"
 path = "src/main.rs"
 
+# Deterministic test agent. Lives in this package so cargo guarantees it is
+# built before this package's integration tests run (CARGO_BIN_EXE_fake-agent).
+[[bin]]
+name = "fake-agent"
+path = "src/bin/fake_agent.rs"
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true

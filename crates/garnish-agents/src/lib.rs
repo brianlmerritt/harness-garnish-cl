@@ -52,7 +52,9 @@ impl FakeAdapter {
 
     fn binary() -> Result<PathBuf> {
         if let Ok(p) = std::env::var("GARNISH_FAKE_AGENT_BIN") {
-            return Ok(PathBuf::from(p));
+            let p = PathBuf::from(p);
+            anyhow::ensure!(p.exists(), "GARNISH_FAKE_AGENT_BIN points at missing file: {}", p.display());
+            return Ok(p);
         }
         let exe = std::env::current_exe()?;
         for ancestor in [exe.parent(), exe.parent().and_then(|p| p.parent())]

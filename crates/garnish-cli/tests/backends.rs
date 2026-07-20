@@ -9,7 +9,6 @@
 //! An engine named but not installed FAILS (you asked for it); unset var
 //! skips everything.
 
-use std::path::PathBuf;
 use std::process::Command;
 
 struct Env {
@@ -38,10 +37,7 @@ impl Env {
         let out = Command::new(env!("CARGO_BIN_EXE_garnish"))
             .args(args)
             .env("GARNISH_DATA_DIR", self.data_dir.path())
-            .env(
-                "GARNISH_FAKE_AGENT_BIN",
-                PathBuf::from(env!("CARGO_BIN_EXE_garnish")).parent().unwrap().join("fake-agent"),
-            )
+            .env("GARNISH_FAKE_AGENT_BIN", env!("CARGO_BIN_EXE_fake-agent"))
             .output()
             .unwrap();
         (

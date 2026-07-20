@@ -8,7 +8,3 @@ license.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-[[bin]]
-name = "fake-agent"
-path = "src/bin/fake_agent.rs"

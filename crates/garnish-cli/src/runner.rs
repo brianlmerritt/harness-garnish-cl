@@ -192,12 +192,23 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
         conn, Some(task_id), Some(&run_id), "process",
         &serde_json::json!({ "argv": inv.argv, "cwd": wt_path, "phase": "agent" }),
     )?;
-    let outcome = garnish_exec::spawn::run_supervised(
+    let spawn_result = garnish_exec::spawn::run_supervised(
         &inv.argv, &wt_path, &inv.extra_env, &evidence, "agent", &sup,
     )
-    .await?;
+    .await;
     cancel_flag.store(true, Ordering::Relaxed); // stop poller
     let _ = poller.join();
+    let outcome = match spawn_result {
+        Ok(o) => o,
+        Err(e) => {
+            // Spawn/supervision error must never strand the task in
+            // `running` until lease expiry — fail it now, with the reason.
+            store::run_finish(conn, &run_id, "crashed", None)?;
+            state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Failed, &format!("agent spawn failed: {e}"))?;
+            finish_projections(conn, &project)?;
+            return Err(e.context(format!("task {task_id}: agent spawn failed -> failed")));
+        }
+    };
 
     // Persist structured agent events.
     let stdout = std::fs::read_to_string(&outcome.stdout_path).unwrap_or_default();

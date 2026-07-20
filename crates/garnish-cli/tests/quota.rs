@@ -77,7 +77,7 @@ impl Env {
 }
 
 fn fake_agent_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_garnish")).parent().unwrap().join("fake-agent")
+    PathBuf::from(env!("CARGO_BIN_EXE_fake-agent"))
 }
 
 /// Plenty of headroom in both windows -> routed, run, scored.

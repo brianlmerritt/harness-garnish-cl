@@ -77,14 +77,8 @@ impl Env {
 }
 
 fn fake_agent_bin() -> PathBuf {
-    let garnish = PathBuf::from(env!("CARGO_BIN_EXE_garnish"));
-    let candidate = garnish.parent().unwrap().join("fake-agent");
-    assert!(
-        candidate.exists(),
-        "fake-agent not built at {} — run `cargo test --workspace` so all bins build",
-        candidate.display()
-    );
-    candidate
+    // Built by cargo before this package's integration tests run.
+    PathBuf::from(env!("CARGO_BIN_EXE_fake-agent"))
 }
 
 fn repo_is_untouched(repo: &Path) {
@@ -232,6 +226,29 @@ fn cancellation_stops_running_agent() {
         "cancellation took too long"
     );
     assert_eq!(env.task_status(&task), "cancelled");
+}
+
+/// Regression (found on the Ubuntu VPS): an agent that probes OK but fails
+/// to spawn must fail the task immediately, not strand it in `running`
+/// until the lease expires.
+#[test]
+fn unspawnable_agent_fails_task_immediately() {
+    let env = Env::new();
+    env.add_project("demo");
+    let task = env.add_task(&[]);
+    // Exists (probe passes) but is not executable (spawn fails).
+    let dud = env.data_dir.path().join("dud-agent");
+    std::fs::write(&dud, "not a binary").unwrap();
+    let (ok, out) = env.garnish_with(
+        &["task", "run", &task, "--backend", "fake"],
+        &[("GARNISH_FAKE_AGENT_BIN", dud.to_str().unwrap())],
+    );
+    assert!(!ok, "run should report the spawn error: {out}");
+    assert_eq!(
+        env.task_status(&task),
+        "failed",
+        "task must fail cleanly, never hang in running: {out}"
+    );
 }
 
 #[test]
