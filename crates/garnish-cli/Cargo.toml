@@ -15,6 +15,7 @@ clap.workspace = true
 garnish-agents = { path = "../garnish-agents" }
 garnish-core = { path = "../garnish-core" }
 garnish-exec = { path = "../garnish-exec" }
+garnish-providers = { path = "../garnish-providers" }
 libc.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true

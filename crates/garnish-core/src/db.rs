@@ -5,6 +5,7 @@ use std::path::Path;
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_daemon", include_str!("../migrations/0002_daemon.sql")),
+    ("0003_runs_adapter", include_str!("../migrations/0003_runs_adapter.sql")),
 ];
 
 /// Open (creating if needed) the canonical database, applying pending
@@ -69,13 +70,13 @@ mod tests {
             let v: i64 = conn
                 .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(v, 2);
+            assert_eq!(v, 3);
         }
         // Reopen: idempotent, no re-apply.
         let conn = super::open(&path).unwrap();
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(n, 3);
     }
 }

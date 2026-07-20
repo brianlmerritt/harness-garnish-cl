@@ -33,6 +33,36 @@ enum Cmd {
     Daemon(DaemonCmd),
     /// Remove worktrees of finished tasks and stale verifier checkouts.
     Gc,
+    #[command(subcommand)]
+    Quota(QuotaCmd),
+    #[command(subcommand)]
+    Profile(ProfileCmd),
+}
+
+#[derive(Subcommand)]
+enum QuotaCmd {
+    /// Show remaining-quota snapshots (source: codexbar or fake).
+    Status {
+        /// Provider id, e.g. claude, codex, antigravity.
+        #[arg(long, default_value = "claude")]
+        provider: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    /// Register an account profile for a provider (auth stays with the CLI's
+    /// own login; garnish stores only a reference).
+    Add {
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        name: String,
+        /// Optional JSON config (e.g. {"codexbar_account": "work"}).
+        #[arg(long, default_value = "{}")]
+        config: String,
+    },
+    List,
 }
 
 #[derive(Subcommand)]
@@ -178,6 +208,50 @@ async fn main() -> Result<()> {
             }
         },
         Cmd::Gc => daemon::gc(&conn)?,
+        Cmd::Quota(QuotaCmd::Status { provider }) => {
+            match garnish_providers::provider_from_env() {
+                None => println!("no quota source configured (install codexbar or set GARNISH_QUOTA)"),
+                Some(source) => {
+                    let snaps = source.snapshot(&provider)?;
+                    for s in &snaps {
+                        store::quota_snapshot_insert(
+                            &conn, &s.provider, &s.window, s.remaining_pct,
+                            s.resets_at.as_deref(), &s.source, &s.confidence,
+                            s.unknown_reason.as_deref(),
+                        )?;
+                    }
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&snaps)?);
+                    } else {
+                        for s in snaps {
+                            match s.remaining_pct {
+                                Some(pct) => println!(
+                                    "{:12} {:8} {:5.1}% remaining  resets {}",
+                                    s.provider, s.window, pct, s.resets_at.as_deref().unwrap_or("-")
+                                ),
+                                None => println!(
+                                    "{:12} {:8} unknown ({})",
+                                    s.provider, s.window,
+                                    s.unknown_reason.as_deref().unwrap_or("no reason")
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::Profile(c) => match c {
+            ProfileCmd::Add { provider, name, config } => {
+                let cfg: serde_json::Value = serde_json::from_str(&config)?;
+                let id = store::profile_add(&conn, &provider, &name, &cfg)?;
+                println!("profile {provider}/{name} added ({id})");
+            }
+            ProfileCmd::List => {
+                for (id, provider, name) in store::profile_list(&conn)? {
+                    println!("{id}  {provider}/{name}");
+                }
+            }
+        },
     }
     Ok(())
 }

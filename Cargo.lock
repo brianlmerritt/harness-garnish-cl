@@ -300,6 +300,7 @@ dependencies = [
  "garnish-agents",
  "garnish-core",
  "garnish-exec",
+ "garnish-providers",
  "libc",
  "rusqlite",
  "serde_json",
@@ -332,6 +333,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "garnish-providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

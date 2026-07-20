@@ -4,6 +4,7 @@ members = [
     "crates/garnish-core",
     "crates/garnish-exec",
     "crates/garnish-agents",
+    "crates/garnish-providers",
     "crates/garnish-cli",
 ]
 

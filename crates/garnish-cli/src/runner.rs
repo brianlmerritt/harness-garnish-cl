@@ -75,8 +75,11 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
         return Ok(());
     }
 
-    // Route.
-    let adapter_name = route(conn, &task, policy, opts)?;
+    // Route (hard filters + quota gate + score). None = declined by quota;
+    // the task stays ready, possibly rescheduled via not_before.
+    let Some(adapter_name) = route(conn, &task, policy, opts)? else {
+        return Ok(());
+    };
     let adapter = garnish_agents::adapter_by_name(&adapter_name)?;
 
     // Lease + state walk.
@@ -143,7 +146,7 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     std::fs::create_dir_all(&evidence)?;
     task = store::task_get(conn, task_id)?;
     let attempt = 3 - task.retry_budget.max(0);
-    store::run_create(conn, &run_id, task_id, attempt, "headless", &opts.backend, &evidence.to_string_lossy())?;
+    store::run_create(conn, &run_id, task_id, attempt, &adapter_name, "headless", &opts.backend, &evidence.to_string_lossy())?;
 
     let timeout_min = opts.timeout_min.unwrap_or(policy.quota.max_task_minutes);
     let sup = Supervision {
@@ -247,7 +250,8 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     let mut git = git.clone();
     git.head_commit = Some(head.clone());
     store::task_set_git(conn, task_id, &git)?;
-    store::run_finish(conn, &run_id, "ok", None)?;
+    let usage = adapter.extract_usage(&events);
+    store::run_finish(conn, &run_id, "ok", usage.as_ref())?;
 
     // Independent verification in a clean checkout of the produced commit.
     state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Verifying, "agent claims done")?;
@@ -286,15 +290,19 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     Ok(())
 }
 
-/// Route selection: explicit override > task pin > policy pin > policy
-/// allowlist order > fake. Hard-filtered by the project allowlist; records
-/// snapshot + rationale (quota scoring arrives in Phase 3).
+/// Route selection: candidates from explicit override > task pin > project
+/// pin > project allowlist order > fake. Hard filters (policy allowlist,
+/// probe, quota reserve in both windows per project policy), then a
+/// documented score:
+///   score = 0.6 * min(session, weekly remaining)/100 + 0.4 * success_rate
+/// Ok(None) = every candidate declined by quota; the task stays ready and is
+/// rescheduled for the earliest known reset.
 fn route(
     conn: &Connection,
     task: &Task,
     policy: &garnish_core::policy::ProjectPolicy,
     opts: &RunOptions,
-) -> Result<String> {
+) -> Result<Option<String>> {
     let (candidates, why): (Vec<String>, &str) = if let Some(a) = &opts.adapter_override {
         (vec![a.clone()], "cli override")
     } else if let Some(a) = &task.spec.pinned_agent {
@@ -307,34 +315,155 @@ fn route(
         (vec!["fake".into()], "default (no allowlist configured)")
     };
 
+    let quota_source = garnish_providers::provider_from_env();
+    let mut scored: Vec<(f64, String, serde_json::Value)> = vec![];
+    let mut report: Vec<serde_json::Value> = vec![];
+    let mut earliest_reset: Option<String> = None;
+    let mut any_quota_declined = false;
+
     for name in &candidates {
         if !policy.agent_allowed(name) {
             anyhow::bail!("adapter {name} is not allowed by project policy");
         }
         let adapter = garnish_agents::adapter_by_name(name)?;
-        match adapter.probe() {
-            Ok(version) => {
-                store::task_set_route(
-                    conn,
-                    &task.id,
-                    &serde_json::json!({
-                        "adapter": name,
-                        "version": version,
-                        "reason": why,
-                        "quota": { "state": "not-evaluated", "note": "quota routing lands in Phase 3" },
-                    }),
-                )?;
-                return Ok(name.clone());
-            }
+        let version = match adapter.probe() {
+            Ok(v) => v,
             Err(e) => {
-                garnish_core::events::append(
-                    conn, Some(&task.id), None, "route",
-                    &serde_json::json!({ "adapter": name, "skipped": e.to_string() }),
-                )?;
+                report.push(serde_json::json!({ "adapter": name, "excluded": format!("probe failed: {e}") }));
+                continue;
+            }
+        };
+
+        // Quota gate: both windows, per-project reserves (docs/policy-model.md).
+        let mut min_remaining = 100.0_f64;
+        let mut quota_info = serde_json::json!({ "state": "exempt" });
+        if let (Some(provider_id), Some(source)) = (adapter.quota_provider(), quota_source.as_ref()) {
+            let mut declined = None;
+            let mut unknown = None;
+            for (window, reserve) in [
+                (garnish_providers::Window::Session, policy.quota.reserve_pct_session),
+                (garnish_providers::Window::Weekly, policy.quota.reserve_pct_weekly),
+            ] {
+                let decision = source.guard(provider_id, window, reserve)?;
+                match &decision {
+                    garnish_providers::GuardDecision::Safe { remaining_pct } => {
+                        min_remaining = min_remaining.min(*remaining_pct);
+                        store::quota_snapshot_insert(
+                            conn, provider_id, window.as_str(), Some(*remaining_pct), None,
+                            source.name(), "high", None,
+                        )?;
+                    }
+                    garnish_providers::GuardDecision::Below { remaining_pct, resets_at } => {
+                        declined = Some(format!(
+                            "below reserve in {} window ({:?}% < {}%)",
+                            window.as_str(), remaining_pct, reserve
+                        ));
+                        if let Some(r) = resets_at {
+                            if earliest_reset.as_deref().map(|e| r.as_str() < e).unwrap_or(true) {
+                                earliest_reset = Some(r.clone());
+                            }
+                        }
+                        store::quota_snapshot_insert(
+                            conn, provider_id, window.as_str(), *remaining_pct,
+                            resets_at.as_deref(), source.name(), "high", None,
+                        )?;
+                        break;
+                    }
+                    garnish_providers::GuardDecision::Unknown { reason } => {
+                        unknown = Some(reason.clone());
+                        store::quota_snapshot_insert(
+                            conn, provider_id, window.as_str(), None, None,
+                            source.name(), "unknown", Some(reason),
+                        )?;
+                        break;
+                    }
+                }
+            }
+            if let Some(reason) = declined {
+                any_quota_declined = true;
+                report.push(serde_json::json!({ "adapter": name, "excluded": reason }));
+                continue;
+            }
+            if let Some(reason) = unknown {
+                if policy.quota.unknown_quota == "fail_open" {
+                    min_remaining = 50.0; // uninformative middle for scoring
+                    quota_info = serde_json::json!({ "state": "unknown", "reason": reason, "policy": "fail_open" });
+                } else {
+                    any_quota_declined = true;
+                    report.push(serde_json::json!({
+                        "adapter": name,
+                        "excluded": format!("quota unknown ({reason}) and policy is fail_closed"),
+                    }));
+                    continue;
+                }
+            } else {
+                quota_info = serde_json::json!({ "state": "ok", "min_remaining_pct": min_remaining });
+            }
+        } else if adapter.quota_provider().is_some() {
+            // Subscription adapter but no quota source configured/installed.
+            if policy.quota.unknown_quota == "fail_open" {
+                min_remaining = 50.0;
+                quota_info = serde_json::json!({ "state": "unknown", "reason": "no quota source", "policy": "fail_open" });
+            } else {
+                any_quota_declined = true;
+                report.push(serde_json::json!({
+                    "adapter": name,
+                    "excluded": "no quota source (install codexbar or set quota.unknown_quota=fail_open)",
+                }));
+                continue;
             }
         }
+
+        let success = store::adapter_success_rate(conn, name)?;
+        let score = 0.6 * (min_remaining / 100.0) + 0.4 * success;
+        report.push(serde_json::json!({
+            "adapter": name, "version": version, "score": score,
+            "quota": quota_info, "success_rate": success,
+        }));
+        scored.push((score, name.clone(), quota_info));
     }
-    anyhow::bail!("no usable adapter among {candidates:?} ({why})")
+
+    let Some((score, chosen, quota_info)) = scored
+        .into_iter()
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+    else {
+        if any_quota_declined {
+            if let Some(reset) = &earliest_reset {
+                let secs = chrono::DateTime::parse_from_rfc3339(reset)
+                    .map(|t| (t.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds().max(60))
+                    .unwrap_or(15 * 60);
+                store::task_set_not_before(conn, &task.id, secs)?;
+                garnish_core::events::append(conn, Some(&task.id), None, "quota_declined",
+                    &serde_json::json!({ "candidates": report, "rescheduled_for": reset }))?;
+                println!("task {}: declined — quota below reserve; rescheduled for {reset}", task.id);
+            } else {
+                garnish_core::events::append(conn, Some(&task.id), None, "quota_declined",
+                    &serde_json::json!({ "candidates": report }))?;
+                println!("task {}: declined — quota below reserve or unknown (fail_closed); no reset time known", task.id);
+            }
+            return Ok(None);
+        }
+        anyhow::bail!("no usable adapter among {candidates:?} ({why}): {report:?}")
+    };
+
+    let profile = garnish_agents::adapter_by_name(&chosen)?
+        .quota_provider()
+        .map(|p| store::profiles_for(conn, p))
+        .transpose()?
+        .and_then(|profiles| profiles.first().cloned());
+    store::task_set_route(
+        conn,
+        &task.id,
+        &serde_json::json!({
+            "adapter": chosen,
+            "profile": profile.as_ref().map(|(_, name)| name),
+            "reason": why,
+            "score": score,
+            "quota": quota_info,
+            "candidates": report,
+        }),
+    )?;
+    Ok(Some(chosen))
 }
 
 /// Run the task's verification commands in a detached clean worktree at

@@ -6,11 +6,15 @@ agents, selects work that can safely finish within available quota and time,
 runs it in isolated git worktrees and containers, verifies results
 independently, and leaves a transparent audit trail.
 
-Status: **Phase 2 — supervision and recovery**. `garnish` runs the full task
-loop (route → isolated worktree → agent → independent verification in a
-clean sandbox → patch) plus a daemon with queue/leases/heartbeats, bounded
-retry with backoff, pause-all, graceful shutdown with handoff packets, crash
-recovery via lease expiry, and worktree garbage collection. See
+Status: **Phase 3 — multi-agent and quota routing**. `garnish` runs the full
+task loop (quota-gated route → isolated worktree → agent → independent
+verification in a clean sandbox → patch), a supervision daemon (leases,
+heartbeats, retry with backoff, pause/handoff, crash recovery, GC), adapters
+for Claude Code, Codex CLI, and Antigravity (plus a deterministic fake), and
+CodexBar-backed quota routing: per-project reserves in session and weekly
+windows, decline-and-reschedule to the reset time, fail-open/closed policy
+for unknown quota, and a recorded score per route. Real-agent smoke tests are
+opt-in (`cargo test --test real_smoke -- --ignored`, quota-consuming). See
 [docs/mvp-acceptance.md](docs/mvp-acceptance.md) for remaining MVP scope.
 
 ```

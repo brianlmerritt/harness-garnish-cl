@@ -119,6 +119,7 @@ pub struct Run {
     pub id: String,
     pub task_id: String,
     pub attempt: i64,
+    pub adapter: Option<String>,
     pub mode: String,    // headless | verify
     pub backend: String, // docker | podman | fake | host-cli
     pub started_at: Option<String>,

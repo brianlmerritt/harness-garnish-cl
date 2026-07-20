@@ -1,0 +1,27 @@
+[
+  {
+    "pace": {
+      "primary": { "stage": "farBehind", "willLastToReset": true, "expectedUsedPercent": 73, "deltaPercent": -29 },
+      "secondary": { "stage": "farBehind", "willLastToReset": true, "expectedUsedPercent": 95, "deltaPercent": -60 }
+    },
+    "usage": {
+      "tertiary": null,
+      "identity": { "providerID": "claude" },
+      "primary": {
+        "usedPercent": 44,
+        "windowMinutes": 300,
+        "resetsAt": "2026-07-20T20:09:00Z",
+        "resetDescription": "Resets 9:09pm (Europe/London)"
+      },
+      "secondary": {
+        "usedPercent": 35,
+        "windowMinutes": 10080,
+        "resetsAt": "2026-07-21T03:59:00Z",
+        "resetDescription": "Resets Jul 21 at 4:59am (Europe/London)"
+      },
+      "updatedAt": "2026-07-20T18:47:41Z"
+    },
+    "provider": "claude",
+    "source": "auto"
+  }
+]

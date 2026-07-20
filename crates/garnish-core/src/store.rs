@@ -393,11 +393,13 @@ pub fn deps_unmet(conn: &Connection, task_id: &str) -> Result<Vec<String>> {
 
 // ---------- runs ----------
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_create(
     conn: &Connection,
     id: &str,
     task_id: &str,
     attempt: i64,
+    adapter: &str,
     mode: &str,
     backend: &str,
     evidence_dir: &str,
@@ -406,6 +408,7 @@ pub fn run_create(
         id: id.into(),
         task_id: task_id.into(),
         attempt,
+        adapter: Some(adapter.into()),
         mode: mode.into(),
         backend: backend.into(),
         started_at: Some(crate::ids::now()),
@@ -415,11 +418,75 @@ pub fn run_create(
         evidence_dir: evidence_dir.into(),
     };
     conn.execute(
-        "INSERT INTO runs (id, task_id, attempt, mode, backend, started_at, evidence_dir)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![r.id, r.task_id, r.attempt, r.mode, r.backend, r.started_at, r.evidence_dir],
+        "INSERT INTO runs (id, task_id, attempt, adapter, mode, backend, started_at, evidence_dir)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![r.id, r.task_id, r.attempt, r.adapter, r.mode, r.backend, r.started_at, r.evidence_dir],
     )?;
     Ok(r)
+}
+
+/// Historical success rate of an adapter across all headless runs; 0.5 when
+/// there is no history (uninformative prior for the routing score).
+pub fn adapter_success_rate(conn: &Connection, adapter: &str) -> Result<f64> {
+    let (ok, total): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(SUM(exit_status = 'ok'), 0), COUNT(*) FROM runs
+         WHERE adapter = ?1 AND mode = 'headless' AND exit_status IS NOT NULL",
+        [adapter],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if total == 0 {
+        return Ok(0.5);
+    }
+    Ok(ok as f64 / total as f64)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn quota_snapshot_insert(
+    conn: &Connection,
+    provider: &str,
+    window: &str,
+    remaining_pct: Option<f64>,
+    resets_at: Option<&str>,
+    source: &str,
+    confidence: &str,
+    unknown_reason: Option<&str>,
+) -> Result<String> {
+    let id = crate::ids::new_id();
+    conn.execute(
+        "INSERT INTO quota_snapshots (id, at, provider, window, remaining_pct, resets_at, source, confidence, unknown_reason)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![id, crate::ids::now(), provider, window, remaining_pct, resets_at, source, confidence, unknown_reason],
+    )?;
+    Ok(id)
+}
+
+// ---------- profiles ----------
+
+pub fn profile_add(conn: &Connection, provider: &str, name: &str, config: &serde_json::Value) -> Result<String> {
+    let id = crate::ids::new_id();
+    conn.execute(
+        "INSERT INTO profiles (id, provider, name, config_json) VALUES (?1, ?2, ?3, ?4)",
+        params![id, provider, name, serde_json::to_string(config)?],
+    )?;
+    Ok(id)
+}
+
+/// Profiles for a provider, insertion order. Empty = use the CLI's own
+/// default login.
+pub fn profiles_for(conn: &Connection, provider: &str) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM profiles WHERE provider = ?1 ORDER BY rowid")?;
+    let rows = stmt
+        .query_map([provider], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn profile_list(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare("SELECT id, provider, name FROM profiles ORDER BY provider, rowid")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 pub fn run_finish(
@@ -442,23 +509,24 @@ pub fn run_finish(
 
 pub fn run_list(conn: &Connection, task_id: &str) -> Result<Vec<Run>> {
     let mut stmt = conn.prepare(
-        "SELECT id, task_id, attempt, mode, backend, started_at, ended_at, exit_status, usage_json, evidence_dir
+        "SELECT id, task_id, attempt, adapter, mode, backend, started_at, ended_at, exit_status, usage_json, evidence_dir
          FROM runs WHERE task_id = ?1 ORDER BY started_at",
     )?;
     let rows = stmt
         .query_map([task_id], |r| {
-            let usage: Option<String> = r.get(8)?;
+            let usage: Option<String> = r.get(9)?;
             Ok(Run {
                 id: r.get(0)?,
                 task_id: r.get(1)?,
                 attempt: r.get(2)?,
-                mode: r.get(3)?,
-                backend: r.get(4)?,
-                started_at: r.get(5)?,
-                ended_at: r.get(6)?,
-                exit_status: r.get(7)?,
+                adapter: r.get(3)?,
+                mode: r.get(4)?,
+                backend: r.get(5)?,
+                started_at: r.get(6)?,
+                ended_at: r.get(7)?,
+                exit_status: r.get(8)?,
                 usage: usage.and_then(|s| serde_json::from_str(&s).ok()),
-                evidence_dir: r.get(9)?,
+                evidence_dir: r.get(10)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;

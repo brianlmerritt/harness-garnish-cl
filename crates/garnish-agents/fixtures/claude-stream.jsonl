@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","cwd":"/work","session_id":"s-1","model":"claude-sonnet-5","permissionMode":"acceptEdits"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Write","input":{"file_path":"hello.txt","content":"hi"}}]},"session_id":"s-1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]},"session_id":"s-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done — hello.txt written."}]},"session_id":"s-1"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":6544,"num_turns":2,"result":"Done — hello.txt written.","session_id":"s-1","total_cost_usd":0.0213,"usage":{"input_tokens":11,"cache_creation_input_tokens":2100,"cache_read_input_tokens":14024,"output_tokens":98}}
