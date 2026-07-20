@@ -19,8 +19,12 @@ One-shot unless the user grants a narrow reusable rule; all recorded.
 
 ## Per-project policy (`projects.policy_json`)
 
-Set at `garnish project add`, edited via `garnish project policy`; `garnish
-config explain` shows provenance (global default → project → task override).
+Set at `garnish project add`; `garnish config explain --project X` shows
+provenance per field. NOTE: the example below is the *target* shape — fields
+marked `(planned)` are not yet in the parsed schema and would currently be
+rejected by strict validation (see docs/TEST_PLAN.md appendix): `working_hours`
+override object, `git.submodule_update`, `autonomy.class2_rules`,
+`agents.verifier`, and `budget.*`.
 
 ```jsonc
 {

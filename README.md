@@ -46,6 +46,7 @@ target/debug/garnish doctor      # probe engines, agent CLIs, quota tooling
 | [docs/policy-model.md](docs/policy-model.md) | Risk classes, per-project policy, W/O/B scheduling |
 | [docs/quota-reserves-and-forecasting.md](docs/quota-reserves-and-forecasting.md) | Reserve semantics, tracked snapshots, forecasting design |
 | [docs/testing.md](docs/testing.md) | Test tiers and per-platform instructions |
+| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | MVP evaluation plan — real-usage tests, verdicts, and what can't be tested yet |
 | [docs/threat-model.md](docs/threat-model.md) | Threats and mitigations |
 | [docs/mvp-acceptance.md](docs/mvp-acceptance.md) | Revised MVP scope and demo criteria |
 | [docs/adr/](docs/adr/) | Architecture decision records |
