@@ -6,7 +6,17 @@ agents, selects work that can safely finish within available quota and time,
 runs it in isolated git worktrees and containers, verifies results
 independently, and leaves a transparent audit trail.
 
-Status: **Phase 0 — design**. No runnable code yet.
+Status: **Phase 1 — tested vertical slice**. `garnish` builds and runs the
+full loop: create task → route → execute in an isolated worktree (fake or
+real agent) → independently verify in a clean sandbox (docker/podman/fake)
+→ present a patch. See [docs/mvp-acceptance.md](docs/mvp-acceptance.md) for
+what is and is not yet covered.
+
+```
+cargo build --workspace          # binaries: garnish, fake-agent
+cargo test --workspace           # unit + e2e tests, no provider quota used
+target/debug/garnish doctor      # probe engines, agent CLIs, quota tooling
+```
 
 - Build brief: [Harness-Garnish-build-specification.md](Harness-Garnish-build-specification.md)
 - CLI name: `garnish` (`hg` collides with Mercurial)
