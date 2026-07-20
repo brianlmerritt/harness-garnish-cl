@@ -11,6 +11,21 @@ pub struct RunOptions {
     pub backend: String,
     pub timeout_min: Option<u32>,
     pub image: String,
+    /// Set by the daemon on shutdown: stop the agent and pause (not cancel)
+    /// the task, leaving a handoff packet.
+    pub external_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            adapter_override: None,
+            backend: "fake".into(),
+            timeout_min: None,
+            image: "alpine:3.20".into(),
+            external_cancel: None,
+        }
+    }
 }
 
 /// The Phase 1 vertical slice: route -> worktree -> execute -> verify ->
@@ -66,12 +81,13 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
 
     // Lease + state walk.
     let resuming = task.status == TaskStatus::AwaitingApproval;
-    let lease_secs = (opts
-        .timeout_min
-        .unwrap_or(policy.quota.max_task_minutes) as i64)
-        * 60
-        + 300;
+    // Lease covers the run plus slack; overridable for crash-recovery tests.
+    let lease_secs = std::env::var("GARNISH_LEASE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or((opts.timeout_min.unwrap_or(policy.quota.max_task_minutes) as i64) * 60 + 300);
     store::task_lease(conn, task_id, "garnish-cli", lease_secs)?;
+    store::task_clear_flags(conn, task_id)?; // stale cancel/pause from earlier runs
     if !resuming {
         state::transition(conn, task_id, TaskStatus::Ready, TaskStatus::Leased, "scheduled by task run")?;
         state::transition(conn, task_id, TaskStatus::Leased, TaskStatus::Planning, "route chosen")?;
@@ -136,17 +152,34 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     };
     let cancel_flag = sup.cancel.clone();
     let poller_flag = sup.cancel.clone();
+    let external = opts.external_cancel.clone();
     let db_path = paths::db_path();
     let cancel_task_id = task_id.to_string();
-    let poller = std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(500));
-        if poller_flag.load(Ordering::Relaxed) {
-            break; // runner finished
-        }
-        if let Ok(c) = garnish_core::db::open(&db_path) {
-            if store::task_cancel_requested(&c, &cancel_task_id).unwrap_or(false) {
-                poller_flag.store(true, Ordering::Relaxed);
-                break;
+    let poller = std::thread::spawn(move || {
+        let mut ticks: u64 = 0;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            ticks += 1;
+            if poller_flag.load(Ordering::Relaxed) {
+                break; // runner finished
+            }
+            if let Some(ext) = &external {
+                if ext.load(Ordering::Relaxed) {
+                    poller_flag.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+            if let Ok(c) = garnish_core::db::open(&db_path) {
+                if store::task_cancel_requested(&c, &cancel_task_id).unwrap_or(false)
+                    || store::task_pause_requested(&c, &cancel_task_id).unwrap_or(false)
+                {
+                    poller_flag.store(true, Ordering::Relaxed);
+                    break;
+                }
+                if ticks.is_multiple_of(10) {
+                    // Heartbeat every ~5s: extend the lease while alive.
+                    let _ = store::task_heartbeat(&c, &cancel_task_id, 60);
+                }
             }
         }
     });
@@ -176,10 +209,23 @@ pub async fn run_task(conn: &Connection, task_id: &str, opts: &RunOptions) -> Re
     match outcome.status {
         "ok" => {}
         "cancelled" => {
-            store::run_finish(conn, &run_id, "cancelled", None)?;
-            state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Cancelled, "cancel requested")?;
-            finish_projections(conn, &project)?;
-            println!("task {task_id}: cancelled cleanly (agent process tree stopped)");
+            // User cancel -> cancelled; pause request or daemon shutdown ->
+            // paused with a handoff packet (preemption-safe).
+            let user_cancel = store::task_cancel_requested(conn, task_id)?;
+            if user_cancel {
+                store::run_finish(conn, &run_id, "cancelled", None)?;
+                state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Cancelled, "cancel requested")?;
+                finish_projections(conn, &project)?;
+                println!("task {task_id}: cancelled cleanly (agent process tree stopped)");
+            } else {
+                store::run_finish(conn, &run_id, "paused", None)?;
+                state::transition(conn, task_id, TaskStatus::Running, TaskStatus::Paused, "pause/shutdown requested")?;
+                store::task_clear_flags(conn, task_id)?;
+                write_handoff(conn, &project, task_id,
+                    "paused mid-run; worktree preserved. Next safe action: `garnish task resume` then `task run` (any compatible adapter)")?;
+                finish_projections(conn, &project)?;
+                println!("task {task_id}: paused (handoff written; worktree preserved)");
+            }
             return Ok(());
         }
         other => {

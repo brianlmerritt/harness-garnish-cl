@@ -1,3 +1,4 @@
+mod daemon;
 mod runner;
 
 use anyhow::Result;
@@ -28,6 +29,33 @@ enum Cmd {
     Approval(ApprovalCmd),
     #[command(subcommand)]
     Events(EventsCmd),
+    #[command(subcommand)]
+    Daemon(DaemonCmd),
+    /// Remove worktrees of finished tasks and stale verifier checkouts.
+    Gc,
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Run the daemon in the foreground.
+    Run {
+        #[arg(long, default_value = "fake")]
+        backend: String,
+        #[arg(long, default_value = "alpine:3.20")]
+        image: String,
+    },
+    /// Start the daemon detached (logs to the data dir).
+    Start {
+        #[arg(long, default_value = "fake")]
+        backend: String,
+        #[arg(long, default_value = "alpine:3.20")]
+        image: String,
+    },
+    Stop,
+    Status,
+    /// Stop leasing new tasks (running task finishes/pauses normally).
+    PauseAll,
+    ResumeAll,
 }
 
 #[derive(Subcommand)]
@@ -95,6 +123,11 @@ enum TaskCmd {
     Cancel { id: String },
     /// Return a failed task to ready (consumes no retry budget).
     Retry { id: String },
+    /// Pause: a ready task immediately; a running task at the next safe
+    /// point, with a handoff packet.
+    Pause { id: String },
+    /// Return a paused task to ready.
+    Resume { id: String },
 }
 
 #[derive(Subcommand)]
@@ -126,6 +159,25 @@ async fn main() -> Result<()> {
             let n = events::verify_chain(&conn)?;
             println!("event chain OK ({n} events)");
         }
+        Cmd::Daemon(c) => match c {
+            DaemonCmd::Run { backend, image } => {
+                daemon::run(daemon::DaemonOptions { backend, image, poll: std::time::Duration::from_secs(5) }).await?;
+            }
+            DaemonCmd::Start { backend, image } => {
+                daemon::start(&daemon::DaemonOptions { backend, image, poll: std::time::Duration::from_secs(5) })?;
+            }
+            DaemonCmd::Stop => daemon::stop()?,
+            DaemonCmd::Status => daemon::status()?,
+            DaemonCmd::PauseAll => {
+                store::control_set(&conn, "pause_all", "1")?;
+                println!("pause-all set: daemon will not lease new tasks");
+            }
+            DaemonCmd::ResumeAll => {
+                store::control_set(&conn, "pause_all", "0")?;
+                println!("pause-all cleared");
+            }
+        },
+        Cmd::Gc => daemon::gc(&conn)?,
     }
     Ok(())
 }
@@ -284,6 +336,7 @@ async fn task_cmd(conn: &rusqlite::Connection, c: TaskCmd, json: bool) -> Result
                 backend,
                 timeout_min,
                 image,
+                external_cancel: None,
             };
             runner::run_task(conn, &id, &opts).await?;
         }
@@ -295,6 +348,21 @@ async fn task_cmd(conn: &rusqlite::Connection, c: TaskCmd, json: bool) -> Result
             let t = store::task_get(conn, &id)?;
             state::transition(conn, &id, t.status, TaskStatus::Ready, "manual retry")?;
             println!("task {id} -> ready");
+        }
+        TaskCmd::Pause { id } => {
+            let t = store::task_get(conn, &id)?;
+            if t.status == TaskStatus::Running {
+                store::task_request_pause(conn, &id)?;
+                println!("pause requested for running task {id}; it stops at the next safe point with a handoff");
+            } else {
+                state::transition(conn, &id, t.status, TaskStatus::Paused, "manual pause")?;
+                println!("task {id} -> paused");
+            }
+        }
+        TaskCmd::Resume { id } => {
+            let t = store::task_get(conn, &id)?;
+            state::transition(conn, &id, t.status, TaskStatus::Ready, "manual resume")?;
+            println!("task {id} -> ready (worktree and evidence preserved)");
         }
     }
     Ok(())

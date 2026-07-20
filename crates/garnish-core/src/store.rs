@@ -259,6 +259,88 @@ pub fn task_cancel_requested(conn: &Connection, id: &str) -> Result<bool> {
     })? != 0)
 }
 
+pub fn task_request_pause(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("UPDATE tasks SET pause_requested = 1 WHERE id = ?1", [id])?;
+    crate::events::append(conn, Some(id), None, "pause_requested", &serde_json::json!({}))?;
+    Ok(())
+}
+
+pub fn task_pause_requested(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.query_row("SELECT pause_requested FROM tasks WHERE id = ?1", [id], |r| {
+        r.get::<_, i64>(0)
+    })? != 0)
+}
+
+pub fn task_clear_flags(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET cancel_requested = 0, pause_requested = 0 WHERE id = ?1",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// Delay a task's next eligibility (retry backoff / quota wake time).
+pub fn task_set_not_before(conn: &Connection, id: &str, seconds_from_now: i64) -> Result<()> {
+    let t = (chrono::Utc::now() + chrono::Duration::seconds(seconds_from_now))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    conn.execute("UPDATE tasks SET not_before = ?1 WHERE id = ?2", params![t, id])?;
+    Ok(())
+}
+
+/// Ready tasks eligible now (not_before passed), highest priority first.
+/// Dependency/schedule/risk filtering happens in the caller, which has the
+/// project policies.
+pub fn tasks_eligible(conn: &Connection) -> Result<Vec<Task>> {
+    let now = crate::ids::now();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {TASK_COLS} FROM tasks
+         WHERE status = 'ready' AND (not_before IS NULL OR not_before <= ?1)
+         ORDER BY priority DESC, created_at ASC"
+    ))?;
+    let rows = stmt
+        .query_map([&now], row_to_task)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+// ---------- control flags ----------
+
+pub fn control_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO control (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn control_get(conn: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row("SELECT value FROM control WHERE key = ?1", [key], |r| r.get(0))
+        .optional()?)
+}
+
+/// Worktrees of terminal-state tasks, for garbage collection.
+/// Returns (task_id, project_root, worktree_path).
+pub fn gc_candidates(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, p.root_path, t.git_json FROM tasks t
+         JOIN projects p ON p.id = t.project_id
+         WHERE t.status IN ('completed','cancelled','superseded','failed') AND t.git_json IS NOT NULL",
+    )?;
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, root, git_json)| {
+            let git: serde_json::Value = serde_json::from_str(&git_json).ok()?;
+            let path = git["worktree_path"].as_str()?.to_string();
+            Some((id, root, path))
+        })
+        .collect())
+}
+
 pub fn task_decrement_retry(conn: &Connection, id: &str) -> Result<i64> {
     conn.execute(
         "UPDATE tasks SET retry_budget = retry_budget - 1 WHERE id = ?1 AND retry_budget > 0",

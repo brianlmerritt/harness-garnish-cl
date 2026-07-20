@@ -6,11 +6,12 @@ agents, selects work that can safely finish within available quota and time,
 runs it in isolated git worktrees and containers, verifies results
 independently, and leaves a transparent audit trail.
 
-Status: **Phase 1 — tested vertical slice**. `garnish` builds and runs the
-full loop: create task → route → execute in an isolated worktree (fake or
-real agent) → independently verify in a clean sandbox (docker/podman/fake)
-→ present a patch. See [docs/mvp-acceptance.md](docs/mvp-acceptance.md) for
-what is and is not yet covered.
+Status: **Phase 2 — supervision and recovery**. `garnish` runs the full task
+loop (route → isolated worktree → agent → independent verification in a
+clean sandbox → patch) plus a daemon with queue/leases/heartbeats, bounded
+retry with backoff, pause-all, graceful shutdown with handoff packets, crash
+recovery via lease expiry, and worktree garbage collection. See
+[docs/mvp-acceptance.md](docs/mvp-acceptance.md) for remaining MVP scope.
 
 ```
 cargo build --workspace          # binaries: garnish, fake-agent
